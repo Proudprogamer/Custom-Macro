@@ -45,3 +45,68 @@ pub fn serialize_number_struct(input : TokenStream) -> TokenStream {
 
     generated.into()//converst proc_macro::macro2::TokenStream to proc_macro::macro::TokenStream
 }
+
+
+pub fn deserialize_number_struct(input : TokenStream) ->TokenStream {
+    let ast = syn::parse(input).unwrap();
+    let name = &ast.ident;
+
+    let (deserialized_fields, deserialized_assignments, total_size) = match &ast.data{
+        Data::Struct(data_fields) => {
+            match &data_fields.fields {
+                Fields::Named(fields) =>{
+
+                    let mut offset : usize=0;
+                    let mut field_deserializations = Vec::new();
+                    let mut field_assignments = Vec::new();
+
+                    for field in &fields {
+                        let field_name = &field.ident;
+                        let field_size = 4;
+                        let start_offset = offset;
+                        let end_offset = start_offset + field_size;
+
+                        field_deserializations.push(quote! {
+                            let #field_name = {
+                                let bytes:[u8;4] = base[#start_offset..#end_offset].try_into().map_err(|_| Error)?;i32::from_be_bytes(bytes);
+                            }
+                        });
+
+                        field_assignments.push(quote! {
+                            #field_name
+                        });
+
+                        offset+=field_size;
+                        
+                    }
+
+                    (field_deserializations, field_assignments, offset);
+               }
+                _ => panic!("Only named fields are supported"),
+            }
+        }
+        _ => panic!("Only structs are supported"),
+    };
+
+
+    let generated = quote! {
+        impl Deserialize for #name {
+            fn deserialize(&base : [u8]) ->Result<Ok, Error> {
+
+                if(base.len < total_size)
+                {
+                    return Err(Error);
+                }
+
+                #(#deserialized_fields)*;
+
+                Ok(#name {
+                    #(#field_assignments,)*
+                })
+
+            }
+        }
+    }
+
+    generated.into();
+}
